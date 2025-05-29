@@ -12,16 +12,15 @@ podTemplate(
     containers: [
         containerTemplate(name: 'podman', image: "mgoltzsche/podman", ttyEnabled: true, command: 'cat', privileged: true),
         containerTemplate(name: 'gradle',
-                        image: 'gradle:jdk17',
+                        image: 'gradle:jdk21',
                         ttyEnabled: true,
                         command: 'cat',
                         envVars: [
-                            envVar(key: 'GRADLE_OPTS', value: '-Xmx1g -Dorg.gradle.daemon=false'),
-                            envVar(key: 'CI', value: 'true'),
-                            envVar(key: 'TESTCONTAINERS_RYUK_DISABLED', value: 'true'),
-                            envVar(key: 'TESTCONTAINERS_DISABLE', value: 'true')
+                            envVar(key: 'DOCKER_HOST', value: 'unix:///run/podman/podman.sock'),
+                            envVar(key: 'TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE', value: '/run/podman/podman.sock'),
+                            envVar(key: 'TESTCONTAINERS_RYUK_DISABLED', value: 'true')
                         ]),
-        containerTemplate(name: 'azure-cli', image: 'hiondal/azure-kubectl:latest', command: 'cat', ttyEnabled: true),
+        containerTemplate(name: 'azure-cli', image: 'mcr.microsoft.com/azure-cli:latest', command: 'cat', ttyEnabled: true),
         containerTemplate(name: 'envsubst', image: "hiondal/envsubst", command: 'sleep', args: '1h')
     ],
     volumes: [
@@ -55,84 +54,56 @@ podTemplate(
             }
         }
 
-        stage('Clean Existing Resources') {
-            container('azure-cli') {
-                sh """
-                    echo "Cleaning existing resources..."
-                    kubectl delete ingress --all -n ${namespace} --ignore-not-found=true
-                    kubectl delete deployment --all -n ${namespace} --ignore-not-found=true
-                    kubectl delete service --all -n ${namespace} --ignore-not-found=true
-                    kubectl delete configmap --all -n ${namespace} --ignore-not-found=true
-                    kubectl delete secret --all -n ${namespace} --ignore-not-found=true
-                    sleep 10
-                """
-            }
-        }
-
-        stage('Build Applications Only') {
+        stage('Build Applications & SonarQube Analysis') {
             container('podman') {
                 sh 'podman system service -t 0 unix:///run/podman/podman.sock & sleep 2'
             }
 
             container('gradle') {
+                def testContainersConfig = '''docker.client.strategy=org.testcontainers.dockerclient.UnixSocketClientProviderStrategy
+docker.host=unix:///run/podman/podman.sock
+ryuk.container.privileged=true
+testcontainers.reuse.enable=true'''
+
                 sh """
-                    chmod +x gradlew
-                    export GRADLE_OPTS="-Xmx1g -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false"
-                    export CI=true
-                    export TESTCONTAINERS_DISABLE=true
-
-                    echo "Building member service..."
-                    ./gradlew :member:clean :member:build -x test --no-daemon
-
-                    echo "Building mysub service..."
-                    ./gradlew :mysub-infra:clean :mysub-infra:build -x test --no-daemon
-
-                    echo "Building recommend service..."
-                    ./gradlew :recommend:clean :recommend:build -x test --no-daemon
+                    # TestContainers 설정
+                    mkdir -p member/src/test/resources mysub-infra/src/test/resources recommend/src/test/resources
+                    echo '${testContainersConfig}' > member/src/test/resources/testcontainers.properties
+                    echo '${testContainersConfig}' > mysub-infra/src/test/resources/testcontainers.properties
+                    echo '${testContainersConfig}' > recommend/src/test/resources/testcontainers.properties
                 """
-            }
-        }
 
-        stage('Unit Tests Only') {
-            container('gradle') {
-                sh """
-                    export GRADLE_OPTS="-Xmx1g -Dorg.gradle.daemon=false"
-                    export CI=true
-                    export TESTCONTAINERS_DISABLE=true
-
-                    echo "Running Unit Tests Only..."
-                    
-                    # Member service - Unit 테스트만 실행
-                    ./gradlew :member:test --tests="*UnitTest*" --no-daemon || echo "Member unit tests completed with some failures"
-                    
-                    # Recommend service - 모든 테스트 (TestContainers 사용 안함)
-                    ./gradlew :recommend:test --no-daemon || echo "Recommend tests completed with some failures"
-                    
-                    # Mysub service - 모든 테스트 (TestContainers 사용 안함)
-                    ./gradlew :mysub-infra:test --no-daemon || echo "Mysub tests completed with some failures"
-                """
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            container('gradle') {
+                // 빌드 및 SonarQube 분석
                 withSonarQubeEnv('SonarQube') {
                     sh """
-                        export GRADLE_OPTS="-Xmx1g -Dorg.gradle.daemon=false"
-                        
-                        echo "Generating test reports and running SonarQube analysis..."
-                        
-                        # Member service
-                        ./gradlew :member:jacocoTestReport --no-daemon || echo "Member jacoco report generated"
-                        ./gradlew :member:sonar --no-daemon -Dsonar.projectKey=lifesub-member-dg0413 -Dsonar.projectName=lifesub-member -Dsonar.java.binaries=build/classes/java/main -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**,**/e2e/**,**/integration/**
-                        
-                        # Recommend service
-                        ./gradlew :recommend:jacocoTestReport --no-daemon || echo "Recommend jacoco report generated"
-                        ./gradlew :recommend:sonar --no-daemon -Dsonar.projectKey=lifesub-recommend-dg0413 -Dsonar.projectName=lifesub-recommend -Dsonar.java.binaries=build/classes/java/main -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
-                        
-                        # Mysub service
-                        ./gradlew :mysub-infra:jacocoTestReport --no-daemon || echo "Mysub jacoco report generated"
-                        ./gradlew :mysub-infra:sonar --no-daemon -Dsonar.projectKey=lifesub-mysub-dg0413 -Dsonar.projectName=lifesub-mysub -Dsonar.java.binaries=build/classes/java/main -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
+                        chmod +x gradlew
+
+                        # 빌드 실행
+                        ./gradlew :member:build :mysub-infra:build :recommend:build -x test
+
+                        # Member 서비스
+                        ./gradlew :member:test :member:jacocoTestReport :member:sonar \
+                            -Dsonar.projectKey=lifesub-member-dg0413 \
+                            -Dsonar.projectName=lifesub-member-dg0413 \
+                            -Dsonar.java.binaries=build/classes/java/main \
+                            -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
+                            -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
+
+                        # Recommend 서비스
+                        ./gradlew :recommend:test :recommend:jacocoTestReport :recommend:sonar \
+                            -Dsonar.projectKey=lifesub-recommend-dg0413 \
+                            -Dsonar.projectName=lifesub-recommend-dg0413 \
+                            -Dsonar.java.binaries=build/classes/java/main \
+                            -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
+                            -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
+
+                        # Mysub 서비스 (biz & infra 구조)
+                        ./gradlew :mysub-infra:test :mysub-infra:jacocoTestReport :mysub-infra:sonar \
+                            -Dsonar.projectKey=lifesub-mysub-dg0413 \
+                            -Dsonar.projectName=lifesub-mysub-dg0413 \
+                            -Dsonar.java.binaries=build/classes/java/main \
+                            -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
+                            -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
                     """
                 }
             }
@@ -140,19 +111,9 @@ podTemplate(
 
         stage('Quality Gate') {
             timeout(time: 10, unit: 'MINUTES') {
-                script {
-                    try {
-                        def qg = waitForQualityGate()
-                        if (qg.status != 'OK') {
-                            echo "Quality gate failed: ${qg.status}"
-                            echo "Continuing with deployment despite quality gate failure..."
-                        } else {
-                            echo "Quality gate passed successfully!"
-                        }
-                    } catch (Exception e) {
-                        echo "Quality gate check failed: ${e.getMessage()}"
-                        echo "Continuing with deployment..."
-                    }
+                def qg = waitForQualityGate()
+                if (qg.status != 'OK') {
+                    error "Pipeline aborted due to quality gate failure: ${qg.status}"
                 }
             }
         }
@@ -171,8 +132,12 @@ podTemplate(
                         def jarFile = service == 'mysub' ? 'mysub.jar' : "${service}.jar"
 
                         sh """
-                            echo "Building ${service} image..."
-                            podman build --build-arg BUILD_LIB_DIR="${buildDir}/build/libs" --build-arg ARTIFACTORY_FILE="${jarFile}" -f deployment/container/Dockerfile -t ${props.registry}/${props.image_org}/${service}:${imageTag} .
+                            podman build \
+                                --build-arg BUILD_LIB_DIR="${buildDir}/build/libs" \
+                                --build-arg ARTIFACTORY_FILE="${jarFile}" \
+                                -f deployment/container/Dockerfile \
+                                -t ${props.registry}/${props.image_org}/${service}:${imageTag} .
+
                             podman push ${props.registry}/${props.image_org}/${service}:${imageTag}
                         """
                     }
@@ -194,22 +159,31 @@ podTemplate(
                     export resources_requests_memory=${props.resources_requests_memory}
                     export resources_limits_cpu=${props.resources_limits_cpu}
                     export resources_limits_memory=${props.resources_limits_memory}
+
+                    # 이미지 경로 환경변수 설정
                     export member_image_path=${props.registry}/${props.image_org}/member:${imageTag}
                     export mysub_image_path=${props.registry}/${props.image_org}/mysub:${imageTag}
                     export recommend_image_path=${props.registry}/${props.image_org}/recommend:${imageTag}
+
+                    # manifest 생성
                     envsubst < deployment/${manifest}.template > deployment/${manifest}
-                    echo "Generated manifest file:"
+                    echo "=== Generated Manifest ==="
                     cat deployment/${manifest}
+                    echo "=========================="
                 """
             }
 
             container('azure-cli') {
                 sh """
                     kubectl apply -f deployment/${manifest}
+
                     echo "Waiting for deployments to be ready..."
                     kubectl -n ${namespace} wait --for=condition=available deployment/member --timeout=300s
                     kubectl -n ${namespace} wait --for=condition=available deployment/mysub --timeout=300s
                     kubectl -n ${namespace} wait --for=condition=available deployment/recommend --timeout=300s
+
+                    echo "Deployment completed successfully!"
+                    kubectl -n ${namespace} get pods
                 """
             }
         }
