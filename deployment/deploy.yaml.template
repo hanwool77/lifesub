@@ -17,7 +17,7 @@ metadata:
   namespace: ${namespace}
 data:
   POSTGRES_DB: member
-  POSTGRES_HOST: postgres-member-postgresql
+  POSTGRES_HOST: member-postgresql
   POSTGRES_PORT: '5432'
   SERVER_PORT: '8081'
 
@@ -31,7 +31,7 @@ data:
   FEE_LEVEL_ADDICT: '100000'
   FEE_LEVEL_COLLECTOR: '50000'
   POSTGRES_DB: mysub
-  POSTGRES_HOST: postgres-mysub-postgresql
+  POSTGRES_HOST: mysub-postgresql
   POSTGRES_PORT: '5432'
   SERVER_PORT: '8082'
 
@@ -43,7 +43,7 @@ metadata:
   namespace: ${namespace}
 data:
   POSTGRES_DB: recommend
-  POSTGRES_HOST: postgres-recommend-postgresql
+  POSTGRES_HOST: recommend-postgresql
   POSTGRES_PORT: '5432'
   SERVER_PORT: '8083'
 
@@ -110,8 +110,6 @@ spec:
       labels:
         app: member
     spec:
-      imagePullSecrets:
-      - name: acr-secret
       containers:
       - name: member
         image: ${member_image_path}
@@ -134,6 +132,24 @@ spec:
             memory: ${resources_limits_memory}
         ports:
         - containerPort: 8081
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8081
+          failureThreshold: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8081
+          initialDelaySeconds: 60
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8081
+          initialDelaySeconds: 10
+          periodSeconds: 5
 
 ---
 apiVersion: apps/v1
@@ -151,8 +167,6 @@ spec:
       labels:
         app: mysub
     spec:
-      imagePullSecrets:
-      - name: acr-secret
       containers:
       - name: mysub
         image: ${mysub_image_path}
@@ -175,6 +189,24 @@ spec:
             memory: ${resources_limits_memory}
         ports:
         - containerPort: 8082
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8082
+          failureThreshold: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8082
+          initialDelaySeconds: 60
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8082
+          initialDelaySeconds: 10
+          periodSeconds: 5
 
 ---
 apiVersion: apps/v1
@@ -192,8 +224,6 @@ spec:
       labels:
         app: recommend
     spec:
-      imagePullSecrets:
-      - name: acr-secret
       containers:
       - name: recommend
         image: ${recommend_image_path}
@@ -216,6 +246,24 @@ spec:
             memory: ${resources_limits_memory}
         ports:
         - containerPort: 8083
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8083
+          failureThreshold: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8083
+          initialDelaySeconds: 60
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8083
+          initialDelaySeconds: 10
+          periodSeconds: 5
 
 ---
 # Services
@@ -269,26 +317,27 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - http:
-        paths:
-          - path: /api/auth
-            pathType: Prefix
-            backend:
-              service:
-                name: member
-                port:
-                  number: 80
-          - path: /api/mysub
-            pathType: Prefix
-            backend:
-              service:
-                name: mysub
-                port:
-                  number: 80
-          - path: /api/recommend
-            pathType: Prefix
-            backend:
-              service:
-                name: recommend
-                port:
-                  number: 80
+  - host: ${ingress_host}
+    http:
+      paths:
+      - path: /api/auth
+        pathType: Prefix
+        backend:
+          service:
+            name: member
+            port:
+              number: 80
+      - path: /api/mysub
+        pathType: Prefix
+        backend:
+          service:
+            name: mysub
+            port:
+              number: 80
+      - path: /api/recommend
+        pathType: Prefix
+        backend:
+          service:
+            name: recommend
+            port:
+              number: 80

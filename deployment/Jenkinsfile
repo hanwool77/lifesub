@@ -12,7 +12,7 @@ podTemplate(
     containers: [
         containerTemplate(name: 'podman', image: "mgoltzsche/podman", ttyEnabled: true, command: 'cat', privileged: true),
         containerTemplate(name: 'gradle',
-                        image: 'gradle:jdk21',
+                        image: 'gradle:jdk17',
                         ttyEnabled: true,
                         command: 'cat',
                         envVars: [
@@ -73,7 +73,7 @@ testcontainers.reuse.enable=true'''
                     echo '${testContainersConfig}' > recommend/src/test/resources/testcontainers.properties
                 """
 
-                // 빌드 및 SonarQube 분석
+                // Member 서비스 빌드 및 SonarQube 분석
                 withSonarQubeEnv('SonarQube') {
                     sh """
                         chmod +x gradlew
@@ -150,6 +150,7 @@ testcontainers.reuse.enable=true'''
                 sh """
                     export namespace=${namespace}
                     export allowed_origins=${props.allowed_origins}
+                    export ingress_host=${props.ingress_host}
                     export jwt_secret_key=${props.jwt_secret_key}
                     export postgres_user=${props.postgres_user}
                     export postgres_password=${props.postgres_password}
@@ -160,26 +161,4 @@ testcontainers.reuse.enable=true'''
                     export resources_limits_memory=${props.resources_limits_memory}
 
                     # 이미지 경로 환경변수 설정
-                    export member_image_path=${props.registry}/${props.image_org}/member:${imageTag}
-                    export mysub_image_path=${props.registry}/${props.image_org}/mysub:${imageTag}
-                    export recommend_image_path=${props.registry}/${props.image_org}/recommend:${imageTag}
-
-                    # manifest 생성
-                    envsubst < deployment/${manifest}.template > deployment/${manifest}
-                    cat deployment/${manifest}
-                """
-            }
-
-            container('azure-cli') {
-                sh """
-                    kubectl apply -f deployment/${manifest}
-
-                    echo "Waiting for deployments to be ready..."
-                    kubectl -n ${namespace} wait --for=condition=available deployment/member --timeout=300s
-                    kubectl -n ${namespace} wait --for=condition=available deployment/mysub --timeout=300s
-                    kubectl -n ${namespace} wait --for=condition=available deployment/recommend --timeout=300s
-                """
-            }
-        }
-    }
-}
+                    export member_image_path=${props.registry}/${props.image_org}/memb
