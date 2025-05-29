@@ -18,9 +18,7 @@ podTemplate(
                         envVars: [
                             envVar(key: 'DOCKER_HOST', value: 'unix:///run/podman/podman.sock'),
                             envVar(key: 'TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE', value: '/run/podman/podman.sock'),
-                            envVar(key: 'TESTCONTAINERS_RYUK_DISABLED', value: 'true'),
-                            envVar(key: 'TESTCONTAINERS_CHECKS_DISABLE', value: 'true'),
-                            envVar(key: 'TESTCONTAINERS_REUSE_ENABLE', value: 'true')
+                            envVar(key: 'TESTCONTAINERS_RYUK_DISABLED', value: 'true')
                         ]),
         containerTemplate(name: 'azure-cli', image: 'hiondal/azure-kubectl:latest', command: 'cat', ttyEnabled: true),
         containerTemplate(name: 'envsubst', image: "hiondal/envsubst", command: 'sleep', args: '1h')
@@ -49,7 +47,7 @@ podTemplate(
                 withCredentials([azureServicePrincipal('azure-credentials')]) {
                     sh """
                         az login --service-principal -u \$AZURE_CLIENT_ID -p \$AZURE_CLIENT_SECRET -t \$AZURE_TENANT_ID
-                        az aks get-credentials --resource-group rg-digitalgarage-03 --name aks-digitalgarage-03 --overwrite-existing
+                        az aks get-credentials --resource-group rg-digitalgarage-01 --name aks-digitalgarage-01 --overwrite-existing
                         kubectl create namespace ${namespace} --dry-run=client -o yaml | kubectl apply -f -
                     """
                 }
@@ -58,73 +56,49 @@ podTemplate(
 
         stage('Build Applications & SonarQube Analysis') {
             container('podman') {
-                sh '''
-                    echo "Starting Podman service..."
-                    podman system service --time=0 unix:///run/podman/podman.sock &
-                    sleep 5
-                    
-                    echo "Checking Podman socket..."
-                    ls -la /run/podman/
-                    podman version
-                '''
+                sh 'podman system service -t 0 unix:///run/podman/podman.sock & sleep 2'
             }
 
             container('gradle') {
-                sh '''
-                    echo "Setting up TestContainers configuration..."
-                    
-                    # Create testcontainers.properties for each module
-                    mkdir -p member/src/test/resources mysub-infra/src/test/resources recommend/src/test/resources
-                    
-                    # Create comprehensive testcontainers.properties
-                    cat > member/src/test/resources/testcontainers.properties << EOF
-docker.client.strategy=org.testcontainers.dockerclient.UnixSocketClientProviderStrategy
+                def testContainersConfig = '''docker.client.strategy=org.testcontainers.dockerclient.UnixSocketClientProviderStrategy
 docker.host=unix:///run/podman/podman.sock
 ryuk.container.privileged=true
-testcontainers.reuse.enable=true
-testcontainers.ryuk.disabled=true
-testcontainers.checks.disable=true
-EOF
+testcontainers.reuse.enable=true'''
 
-                    cp member/src/test/resources/testcontainers.properties mysub-infra/src/test/resources/
-                    cp member/src/test/resources/testcontainers.properties recommend/src/test/resources/
-                    
-                    echo "TestContainers configuration created:"
-                    cat member/src/test/resources/testcontainers.properties
-                '''
+                sh """
+                    # TestContainers 설정
+                    mkdir -p member/src/test/resources mysub-infra/src/test/resources recommend/src/test/resources
+                    echo '${testContainersConfig}' > member/src/test/resources/testcontainers.properties
+                    echo '${testContainersConfig}' > mysub-infra/src/test/resources/testcontainers.properties
+                    echo '${testContainersConfig}' > recommend/src/test/resources/testcontainers.properties
+                """
 
-                // 빌드 및 SonarQube 분석 (테스트 제외)
+                // 빌드 및 SonarQube 분석
                 withSonarQubeEnv('SonarQube') {
                     sh """
                         chmod +x gradlew
 
-                        # 빌드 실행 (테스트 제외)
+                        # 빌드 실행
                         ./gradlew :member:build :mysub-infra:build :recommend:build -x test
 
-                        # 테스트 실행을 별도로 수행하되, 실패 시에도 계속 진행
-                        echo "Running tests..."
-                        
-                        # Member 서비스 테스트 및 분석
-                        ./gradlew :member:test :member:jacocoTestReport --continue || echo "Member tests failed, continuing..."
-                        ./gradlew :member:sonar \
+                        # Member 서비스
+                        ./gradlew :member:test :member:jacocoTestReport :member:sonar \
                             -Dsonar.projectKey=lifesub-member-dg0413 \
                             -Dsonar.projectName=lifesub-member \
                             -Dsonar.java.binaries=build/classes/java/main \
                             -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
                             -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
 
-                        # Recommend 서비스 테스트 및 분석
-                        ./gradlew :recommend:test :recommend:jacocoTestReport --continue || echo "Recommend tests failed, continuing..."
-                        ./gradlew :recommend:sonar \
+                        # Recommend 서비스
+                        ./gradlew :recommend:test :recommend:jacocoTestReport :recommend:sonar \
                             -Dsonar.projectKey=lifesub-recommend-dg0413 \
                             -Dsonar.projectName=lifesub-recommend \
                             -Dsonar.java.binaries=build/classes/java/main \
                             -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
                             -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
 
-                        # Mysub 서비스 테스트 및 분석
-                        ./gradlew :mysub-infra:test :mysub-infra:jacocoTestReport --continue || echo "Mysub tests failed, continuing..."
-                        ./gradlew :mysub-infra:sonar \
+                        # Mysub 서비스 (biz & infra 구조)
+                        ./gradlew :mysub-infra:test :mysub-infra:jacocoTestReport :mysub-infra:sonar \
                             -Dsonar.projectKey=lifesub-mysub-dg0413 \
                             -Dsonar.projectName=lifesub-mysub \
                             -Dsonar.java.binaries=build/classes/java/main \
@@ -139,8 +113,7 @@ EOF
             timeout(time: 10, unit: 'MINUTES') {
                 def qg = waitForQualityGate()
                 if (qg.status != 'OK') {
-                    echo "Quality gate failed: ${qg.status}, but continuing with deployment..."
-                    // error "Pipeline aborted due to quality gate failure: ${qg.status}"
+                    error "Pipeline aborted due to quality gate failure: ${qg.status}"
                 }
             }
         }
@@ -207,10 +180,6 @@ EOF
                     kubectl -n ${namespace} wait --for=condition=available deployment/member --timeout=300s
                     kubectl -n ${namespace} wait --for=condition=available deployment/mysub --timeout=300s
                     kubectl -n ${namespace} wait --for=condition=available deployment/recommend --timeout=300s
-
-                    echo "Deployment completed successfully!"
-                    kubectl -n ${namespace} get pods
-                    kubectl -n ${namespace} get svc
                 """
             }
         }
