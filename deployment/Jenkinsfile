@@ -15,13 +15,21 @@ podTemplate(
             image: "mgoltzsche/podman", 
             ttyEnabled: true, 
             command: 'cat', 
-            privileged: true
+            privileged: true,
+            resourceRequestMemory: '256Mi',
+            resourceLimitMemory: '512Mi',
+            resourceRequestCpu: '100m',
+            resourceLimitCpu: '200m'
         ),
         containerTemplate(
             name: 'gradle',
             image: 'gradle:jdk17',
             ttyEnabled: true,
-            command: 'cat'
+            command: 'cat',
+            resourceRequestMemory: '1Gi',
+            resourceLimitMemory: '2Gi',
+            resourceRequestCpu: '200m',
+            resourceLimitCpu: '1000m',
             envVars: [
                 envVar(key: 'GRADLE_OPTS', value: '-Xmx1g -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false'),
                 envVar(key: 'CI', value: 'true'),
@@ -33,13 +41,21 @@ podTemplate(
             name: 'azure-cli', 
             image: 'hiondal/azure-kubectl:latest', 
             command: 'cat', 
-            ttyEnabled: true
+            ttyEnabled: true,
+            resourceRequestMemory: '128Mi',
+            resourceLimitMemory: '256Mi',
+            resourceRequestCpu: '50m',
+            resourceLimitCpu: '100m'
         ),
         containerTemplate(
             name: 'envsubst', 
             image: "hiondal/envsubst", 
             command: 'sleep', 
-            args: '1h'
+            args: '1h',
+            resourceRequestMemory: '64Mi',
+            resourceLimitMemory: '128Mi',
+            resourceRequestCpu: '25m',
+            resourceLimitCpu: '50m'
         )
     ],
     volumes: [
