@@ -1,6 +1,3 @@
-:set encoding=utf-8
-:set fileencoding=utf-8
-
 def PIPELINE_ID = "${env.BUILD_NUMBER}"
 
 def getImageTag() {
