@@ -12,7 +12,7 @@ podTemplate(
     containers: [
         containerTemplate(name: 'podman', image: "mgoltzsche/podman", ttyEnabled: true, command: 'cat', privileged: true),
         containerTemplate(name: 'gradle',
-                        image: 'gradle:jdk21',
+                        image: 'gradle:jdk17',
                         ttyEnabled: true,
                         command: 'cat',
                         envVars: [
@@ -20,7 +20,7 @@ podTemplate(
                             envVar(key: 'TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE', value: '/run/podman/podman.sock'),
                             envVar(key: 'TESTCONTAINERS_RYUK_DISABLED', value: 'true')
                         ]),
-        containerTemplate(name: 'azure-cli', image: 'mcr.microsoft.com/azure-cli:latest', command: 'cat', ttyEnabled: true),
+        containerTemplate(name: 'azure-cli', image: 'hiondal/azure-kubectl:latest', command: 'cat', ttyEnabled: true),
         containerTemplate(name: 'envsubst', image: "hiondal/envsubst", command: 'sleep', args: '1h')
     ],
     volumes: [
@@ -84,7 +84,7 @@ testcontainers.reuse.enable=true'''
                         # Member 서비스
                         ./gradlew :member:test :member:jacocoTestReport :member:sonar \
                             -Dsonar.projectKey=lifesub-member-dg0413 \
-                            -Dsonar.projectName=lifesub-member-dg0413 \
+                            -Dsonar.projectName=lifesub-member \
                             -Dsonar.java.binaries=build/classes/java/main \
                             -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
                             -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
@@ -92,7 +92,7 @@ testcontainers.reuse.enable=true'''
                         # Recommend 서비스
                         ./gradlew :recommend:test :recommend:jacocoTestReport :recommend:sonar \
                             -Dsonar.projectKey=lifesub-recommend-dg0413 \
-                            -Dsonar.projectName=lifesub-recommend-dg0413 \
+                            -Dsonar.projectName=lifesub-recommend \
                             -Dsonar.java.binaries=build/classes/java/main \
                             -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
                             -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
@@ -100,7 +100,7 @@ testcontainers.reuse.enable=true'''
                         # Mysub 서비스 (biz & infra 구조)
                         ./gradlew :mysub-infra:test :mysub-infra:jacocoTestReport :mysub-infra:sonar \
                             -Dsonar.projectKey=lifesub-mysub-dg0413 \
-                            -Dsonar.projectName=lifesub-mysub-dg0413 \
+                            -Dsonar.projectName=lifesub-mysub \
                             -Dsonar.java.binaries=build/classes/java/main \
                             -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
                             -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
@@ -167,9 +167,8 @@ testcontainers.reuse.enable=true'''
 
                     # manifest 생성
                     envsubst < deployment/${manifest}.template > deployment/${manifest}
-                    echo "=== Generated Manifest ==="
+                    echo "Generated manifest file:"
                     cat deployment/${manifest}
-                    echo "=========================="
                 """
             }
 
@@ -184,6 +183,7 @@ testcontainers.reuse.enable=true'''
 
                     echo "Deployment completed successfully!"
                     kubectl -n ${namespace} get pods
+                    kubectl -n ${namespace} get svc
                 """
             }
         }
