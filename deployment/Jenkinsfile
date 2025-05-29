@@ -1,3 +1,6 @@
+:set encoding=utf-8
+:set fileencoding=utf-8
+
 def PIPELINE_ID = "${env.BUILD_NUMBER}"
 
 def getImageTag() {
@@ -66,44 +69,19 @@ ryuk.container.privileged=true
 testcontainers.reuse.enable=true'''
 
                 sh """
-                    # TestContainers 설정
                     mkdir -p member/src/test/resources mysub-infra/src/test/resources recommend/src/test/resources
                     echo '${testContainersConfig}' > member/src/test/resources/testcontainers.properties
                     echo '${testContainersConfig}' > mysub-infra/src/test/resources/testcontainers.properties
                     echo '${testContainersConfig}' > recommend/src/test/resources/testcontainers.properties
                 """
 
-                // Member 서비스 빌드 및 SonarQube 분석
                 withSonarQubeEnv('SonarQube') {
                     sh """
                         chmod +x gradlew
-
-                        # 빌드 실행
                         ./gradlew :member:build :mysub-infra:build :recommend:build -x test
-
-                        # Member 서비스
-                        ./gradlew :member:test :member:jacocoTestReport :member:sonar \
-                            -Dsonar.projectKey=lifesub-member-dg0413 \
-                            -Dsonar.projectName=lifesub-member-dg0413 \
-                            -Dsonar.java.binaries=build/classes/java/main \
-                            -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
-                            -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
-
-                        # Recommend 서비스
-                        ./gradlew :recommend:test :recommend:jacocoTestReport :recommend:sonar \
-                            -Dsonar.projectKey=lifesub-recommend-dg0413 \
-                            -Dsonar.projectName=lifesub-recommend-dg0413 \
-                            -Dsonar.java.binaries=build/classes/java/main \
-                            -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
-                            -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
-
-                        # Mysub 서비스 (biz & infra 구조)
-                        ./gradlew :mysub-infra:test :mysub-infra:jacocoTestReport :mysub-infra:sonar \
-                            -Dsonar.projectKey=lifesub-mysub-dg0413 \
-                            -Dsonar.projectName=lifesub-mysub-dg0413 \
-                            -Dsonar.java.binaries=build/classes/java/main \
-                            -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
-                            -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
+                        ./gradlew :member:test :member:jacocoTestReport :member:sonar -Dsonar.projectKey=lifesub-member-dg0413 -Dsonar.projectName=lifesub-member-dg0413 -Dsonar.java.binaries=build/classes/java/main -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
+                        ./gradlew :recommend:test :recommend:jacocoTestReport :recommend:sonar -Dsonar.projectKey=lifesub-recommend-dg0413 -Dsonar.projectName=lifesub-recommend-dg0413 -Dsonar.java.binaries=build/classes/java/main -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
+                        ./gradlew :mysub-infra:test :mysub-infra:jacocoTestReport :mysub-infra:sonar -Dsonar.projectKey=lifesub-mysub-dg0413 -Dsonar.projectName=lifesub-mysub-dg0413 -Dsonar.java.binaries=build/classes/java/main -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
                     """
                 }
             }
@@ -132,12 +110,7 @@ testcontainers.reuse.enable=true'''
                         def jarFile = service == 'mysub' ? 'mysub.jar' : "${service}.jar"
 
                         sh """
-                            podman build \
-                                --build-arg BUILD_LIB_DIR="${buildDir}/build/libs" \
-                                --build-arg ARTIFACTORY_FILE="${jarFile}" \
-                                -f deployment/container/Dockerfile \
-                                -t ${props.registry}/${props.image_org}/${service}:${imageTag} .
-
+                            podman build --build-arg BUILD_LIB_DIR="${buildDir}/build/libs" --build-arg ARTIFACTORY_FILE="${jarFile}" -f deployment/container/Dockerfile -t ${props.registry}/${props.image_org}/${service}:${imageTag} .
                             podman push ${props.registry}/${props.image_org}/${service}:${imageTag}
                         """
                     }
@@ -159,6 +132,24 @@ testcontainers.reuse.enable=true'''
                     export resources_requests_memory=${props.resources_requests_memory}
                     export resources_limits_cpu=${props.resources_limits_cpu}
                     export resources_limits_memory=${props.resources_limits_memory}
+                    export member_image_path=${props.registry}/${props.image_org}/member:${imageTag}
+                    export mysub_image_path=${props.registry}/${props.image_org}/mysub:${imageTag}
+                    export recommend_image_path=${props.registry}/${props.image_org}/recommend:${imageTag}
+                    envsubst < deployment/${manifest}.template > deployment/${manifest}
+                    echo "Generated Manifest:"
+                    cat deployment/${manifest}
+                """
+            }
 
-                    # 이미지 경로 환경변수 설정
-                    export member_image_path=${props.registry}/${props.image_org}/memb
+            container('azure-cli') {
+                sh """
+                    kubectl apply -f deployment/${manifest}
+                    echo "Waiting for deployments to be ready..."
+                    kubectl -n ${namespace} wait --for=condition=available deployment/member --timeout=300s
+                    kubectl -n ${namespace} wait --for=condition=available deployment/mysub --timeout=300s
+                    kubectl -n ${namespace} wait --for=condition=available deployment/recommend --timeout=300s
+                """
+            }
+        }
+    }
+}
