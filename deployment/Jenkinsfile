@@ -47,7 +47,7 @@ podTemplate(
                 withCredentials([azureServicePrincipal('azure-credentials')]) {
                     sh """
                         az login --service-principal -u \$AZURE_CLIENT_ID -p \$AZURE_CLIENT_SECRET -t \$AZURE_TENANT_ID
-                        az aks get-credentials --resource-group rg-digitalgarage-01 --name aks-digitalgarage-01 --overwrite-existing
+                        az aks get-credentials --resource-group rg-digitalgarage-03 --name aks-digitalgarage-03 --overwrite-existing
                         kubectl create namespace ${namespace} --dry-run=client -o yaml | kubectl apply -f -
                     """
                 }
