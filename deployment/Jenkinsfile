@@ -172,14 +172,78 @@ testcontainers.reuse.enable=true'''
                 """
             }
 
-            container('azure-cli') {
+         container('azure-cli') {
                 sh """
+                    # 배포 전 현재 상태 확인
+                    echo "=== Pre-deployment Status ==="
+                    kubectl -n ${namespace} get all || echo "No resources found"
+                    
+                    echo "=== Available PostgreSQL Services ==="
+                    kubectl -n ${namespace} get svc | grep postgres || echo "No PostgreSQL services found"
+
                     kubectl apply -f deployment/${manifest}
 
+                    echo "=== Post-deployment Initial Status ==="
+                    kubectl -n ${namespace} get pods -o wide
+                    
+                    echo "=== Recent Events ==="
+                    kubectl -n ${namespace} get events --sort-by='.lastTimestamp' | tail -10
+
                     echo "Waiting for deployments to be ready..."
-                    kubectl -n ${namespace} wait --for=condition=available deployment/member --timeout=300s
-                    kubectl -n ${namespace} wait --for=condition=available deployment/mysub --timeout=300s
-                    kubectl -n ${namespace} wait --for=condition=available deployment/recommend --timeout=300s
+                    
+                    # 각 서비스별로 개별 체크하여 어떤 서비스에서 실패하는지 확인
+                    for service in member mysub recommend; do
+                        echo ""
+                        echo "============================================"
+                        echo "Checking \$service deployment..."
+                        echo "============================================"
+                        
+                        if kubectl -n ${namespace} wait --for=condition=available deployment/\$service --timeout=300s; then
+                            echo "✅ \$service deployment successful!"
+                        else
+                            echo "❌ \$service deployment failed!"
+                            
+                            echo "--- \$service Pod Status ---"
+                            kubectl -n ${namespace} get pods -l app=\$service -o wide
+                            
+                            echo "--- \$service Pod Details ---"
+                            kubectl -n ${namespace} describe pods -l app=\$service
+                            
+                            echo "--- \$service Pod Logs ---"
+                            for pod in \$(kubectl -n ${namespace} get pods -l app=\$service -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+                                if [ ! -z "\$pod" ]; then
+                                    echo "=== Logs for \$pod ==="
+                                    kubectl -n ${namespace} logs \$pod --tail=50 || echo "No logs available for \$pod"
+                                    echo ""
+                                fi
+                            done
+                            
+                            echo "--- \$service Events ---"
+                            kubectl -n ${namespace} get events --field-selector involvedObject.kind=Pod --sort-by='.lastTimestamp' | grep \$service || echo "No specific events for \$service"
+                            
+                            echo "--- \$service ConfigMap Check ---"
+                            kubectl -n ${namespace} get configmap \$service-config -o yaml || echo "ConfigMap not found for \$service"
+                            
+                            echo "--- \$service Secret Check ---"
+                            kubectl -n ${namespace} get secret database-secret -o yaml | grep -E "(POSTGRES_HOST|POSTGRES_USER)" || echo "Database secret check failed"
+                        fi
+                    done
+
+                    echo ""
+                    echo "=== Final Deployment Status ==="
+                    kubectl -n ${namespace} get all
+                    
+                    echo ""
+                    echo "=== All Events (Last 20) ==="
+                    kubectl -n ${namespace} get events --sort-by='.lastTimestamp' | tail -20
+                    
+                    echo ""
+                    echo "=== Network Connectivity Test ==="
+                    # 간단한 네트워크 연결 테스트
+                    for service in member mysub recommend; do
+                        echo "Testing internal connectivity to \$service..."
+                        kubectl -n ${namespace} run test-\$service --image=busybox --rm -i --restart=Never --timeout=10s -- sh -c "nslookup \$service.${namespace}.svc.cluster.local" 2>/dev/null || echo "DNS resolution failed for \$service"
+                    done
                 """
             }
         }
