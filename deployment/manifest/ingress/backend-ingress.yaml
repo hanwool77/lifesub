@@ -1,7 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: mysub-ingress
+  name: lifesub
   namespace: dg0413-lifesub-ns
 spec:
   ingressClassName: nginx
