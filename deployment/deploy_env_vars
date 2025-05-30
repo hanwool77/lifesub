@@ -9,7 +9,7 @@ image_org=dg0413
 
 # Application Settings
 replicas=1
-allowed_origins=http://20.249.107.139
+allowed_origins=http://4.230.149.74
 ingress_host=dg0413.20.249.191.180.nip.io
 
 # Security Settings
